@@ -1,0 +1,68 @@
+# Builds the iPhone app without signing. Sideload the .ipa with AltStore, SideStore or Sideloadly, which sign it
+# with your own Apple ID. The .ipa is published to the "ipa" branch and to the "build-ios" release.
+# If the build fails, the compiler errors are published to the "build-log" branch.
+name: Build iOS (unsigned ipa)
+on:
+  push:
+    branches: [main, app]
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency: { group: ios, cancel-in-progress: true }
+env:
+  LLAMA_TAG: b12242   # llama.cpp release the app is written against
+jobs:
+  ipa:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        run: |
+          V=$(grep -o 'MARKETING_VERSION: "[^"]*"' ios/project.yml | cut -d'"' -f2)
+          echo "V=$V" >> "$GITHUB_ENV"; echo "version $V"
+      - name: llama.cpp framework
+        run: |
+          cd ios && mkdir -p Frameworks && cd Frameworks
+          curl -fsSL -o llama.zip "https://github.com/ggml-org/llama.cpp/releases/download/$LLAMA_TAG/llama-$LLAMA_TAG-xcframework.zip"
+          unzip -q llama.zip && rm llama.zip
+          mv build-apple/llama.xcframework . && rm -rf build-apple
+          ls llama.xcframework
+      - name: XcodeGen
+        run: brew install xcodegen && cd ios && xcodegen generate
+      - name: Build (no signing)
+        run: |
+          cd ios
+          set -o pipefail
+          xcodebuild -project LocalLLM.xcodeproj -scheme LocalLLM -configuration Release -sdk iphoneos -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build > build.log 2>&1 || { grep -E "error|warning: unre|FAILED|fatal" build.log | sort -u | head -150; tail -30 build.log; exit 1; }
+          tail -5 build.log
+          test -d build/Build/Products/Release-iphoneos/LocalLLM.app/Frameworks/llama.framework
+      - name: Package the ipa
+        run: |
+          cd ios && rm -rf Payload && mkdir Payload && cp -R build/Build/Products/Release-iphoneos/LocalLLM.app Payload/
+          zip -qry "../LocalLLM-$V.ipa" Payload && cd .. && ls -la "LocalLLM-$V.ipa"
+      - uses: actions/upload-artifact@v4
+        with: { name: localllm-ipa, path: 'LocalLLM-*.ipa', retention-days: 30 }
+      - name: Publish (ipa branch + release)
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          mkdir /tmp/pub && cp "LocalLLM-$V.ipa" /tmp/pub/ && cd /tmp/pub
+          printf 'Local LLM %s for iPhone (unsigned), built from %s @ %s with llama.cpp %s.\n' "$V" "$GITHUB_REF_NAME" "${GITHUB_SHA::7}" "$LLAMA_TAG" > README.txt
+          git init -q -b ipa && git -c user.name=github-actions -c user.email=actions@github.com add . && \
+            git -c user.name=github-actions -c user.email=actions@github.com commit -qm "Local LLM $V iOS (${GITHUB_SHA::7})"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ipa
+          cd "$GITHUB_WORKSPACE"
+          gh release delete build-ios -y --cleanup-tag 2>/dev/null || true
+          gh release create build-ios "LocalLLM-$V.ipa" --target "$GITHUB_SHA" --prerelease --title "Local LLM $V for iPhone (unsigned)" \
+            --notes "Unsigned .ipa: sideload it with AltStore, SideStore or Sideloadly using your own Apple ID."
+      - name: Publish the build log on failure
+        if: failure()
+        env: { GH_TOKEN: '${{ github.token }}' }
+        run: |
+          mkdir /tmp/log && cd /tmp/log
+          { echo "commit $GITHUB_SHA"; grep -E "error|FAILED|fatal" "$GITHUB_WORKSPACE/ios/build.log" | sort -u | head -200; echo ---; tail -60 "$GITHUB_WORKSPACE/ios/build.log"; } > errors.txt 2>&1 || true
+          git init -q -b build-log && git -c user.name=github-actions -c user.email=actions@github.com add . && \
+            git -c user.name=github-actions -c user.email=actions@github.com commit -qm "build log ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" build-log

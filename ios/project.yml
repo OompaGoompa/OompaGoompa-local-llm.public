@@ -1,0 +1,50 @@
+name: LocalLLM
+options:
+  bundleIdPrefix: com.oompagoompa
+  deploymentTarget:
+    iOS: "16.4"
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+targets:
+  LocalLLM:
+    type: application
+    platform: iOS
+    sources:
+      - path: LocalLLM
+        excludes: ["Info.plist"]
+    dependencies:
+      - framework: Frameworks/llama.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oompagoompa.localllm
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_BITCODE: NO
+    info:
+      path: LocalLLM/Info.plist
+      properties:
+        CFBundleDisplayName: Local LLM
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        ITSAppUsesNonExemptEncryption: false
+        # The app's folder shows up in the Files app, so models and chats can be moved in and out.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: GGUF model
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes: [com.oompagoompa.gguf]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: com.oompagoompa.gguf
+            UTTypeDescription: GGUF model
+            UTTypeConformsTo: [public.data]
+            UTTypeTagSpecification:
+              public.filename-extension: [gguf]
