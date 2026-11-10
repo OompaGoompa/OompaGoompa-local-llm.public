@@ -194,6 +194,15 @@ struct RemoteView: View {
             }
 
             Section {
+                NavigationLink("Server models (add or remove)") {
+                    ServerModelsView()
+                }
+                .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+            } footer: {
+                Text("Download more models onto your own server, straight from here. Works with servers set up by this app (Ollama).")
+            }
+
+            Section {
                 if found.isEmpty {
                     TextField("Model name", text: $model)
                         .textInputAutocapitalization(.never)
@@ -397,5 +406,256 @@ struct NewServerView: View {
         }
         .navigationTitle("New server")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Talks to Ollama's own management API on the server: list, download and delete models.
+struct OllamaAdmin {
+    let root: URL
+
+    static func current() throws -> OllamaAdmin {
+        guard let base = RemoteClient.normalize(UserDefaults.standard.string(forKey: Keys.remoteURL) ?? "") else {
+            throw RemoteError.badAddress
+        }
+        return OllamaAdmin(root: base.lastPathComponent == "v1" ? base.deletingLastPathComponent() : base)
+    }
+
+    struct Item: Identifiable {
+        var id: String { name }
+        let name: String
+        let size: Int64
+    }
+
+    struct Progress {
+        let status: String
+        let fraction: Double?
+    }
+
+    private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil) throws -> URLRequest {
+        var r = URLRequest(url: root.appendingPathComponent(path))
+        r.httpMethod = method
+        r.timeoutInterval = 600
+        if let body {
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        return r
+    }
+
+    func list() async throws -> [Item] {
+        var r = try request("api/tags")
+        r.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: r)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw RemoteError.http(http.statusCode, "This server does not look like Ollama.")
+        }
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let models = object?["models"] as? [[String: Any]] ?? []
+        return models.compactMap { m in
+            guard let name = m["name"] as? String else { return nil }
+            return Item(name: name, size: (m["size"] as? NSNumber)?.int64Value ?? 0)
+        }.sorted { $0.name < $1.name }
+    }
+
+    func delete(_ name: String) async throws {
+        let r = try request("api/delete", method: "DELETE", body: ["model": name, "name": name])
+        let (data, response) = try await URLSession.shared.data(for: r)
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode) {
+            throw RemoteError.http(http.statusCode, String(decoding: data.prefix(200), as: UTF8.self))
+        }
+    }
+
+    func pull(_ name: String) -> AsyncThrowingStream<Progress, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    let r = try request("api/pull", method: "POST", body: ["model": name, "name": name, "stream": true])
+                    let (bytes, response) = try await URLSession.shared.bytes(for: r)
+                    let failed = (response as? HTTPURLResponse).map { !(200...299).contains($0.statusCode) } ?? false
+                    for try await line in bytes.lines {
+                        guard let data = line.data(using: .utf8),
+                              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+                        if let message = object["error"] as? String {
+                            throw PullError.server(message)
+                        }
+                        let status = object["status"] as? String ?? ""
+                        var fraction: Double?
+                        if let total = (object["total"] as? NSNumber)?.doubleValue, total > 0 {
+                            fraction = ((object["completed"] as? NSNumber)?.doubleValue ?? 0) / total
+                        }
+                        continuation.yield(Progress(status: status, fraction: fraction))
+                    }
+                    if failed { throw PullError.server("The server refused the download.") }
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+}
+
+enum PullError: LocalizedError {
+    case server(String)
+    var errorDescription: String? {
+        switch self {
+        case .server(let message):
+            if message.contains("not found") || message.contains("does not exist") || message.contains("manifest") {
+                return "The server could not find a model with that name. Check the spelling, including the part after the colon."
+            }
+            return message
+        }
+    }
+}
+
+struct ServerModelsView: View {
+    @AppStorage(Keys.remoteModel) private var selected = ""
+    @State private var items: [OllamaAdmin.Item] = []
+    @State private var status = "Loading…"
+    @State private var name = ""
+    @State private var pulling: String?
+    @State private var pullStatus = ""
+    @State private var fraction: Double?
+    @State private var pullTask: Task<Void, Never>?
+
+    private let suggestions = [
+        ("llama3.2:3b", "Small and quick, about 2 GB"),
+        ("gemma3:4b", "Small, about 3 GB"),
+        ("qwen2.5:7b", "Mid-size, about 5 GB; needs 8 GB of server memory"),
+        ("qwen2.5:14b", "Large, about 9 GB; needs 16 GB of server memory")
+    ]
+
+    var body: some View {
+        Form {
+            Section {
+                if items.isEmpty { Text(status).foregroundStyle(.secondary) }
+                ForEach(items) { item in
+                    Button {
+                        selected = item.name
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name).foregroundStyle(.primary)
+                                Text(Mem.text(UInt64(max(0, item.size)))).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if selected == item.name { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                        }
+                    }
+                    .swipeActions {
+                        Button(role: .destructive) { remove(item.name) } label: { Label("Delete", systemImage: "trash") }
+                    }
+                }
+            } header: {
+                Text("On the server")
+            } footer: {
+                Text("Tap a model to chat with it. Swipe left to delete it from the server.")
+            }
+
+            Section {
+                if let pulling {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Downloading \(pulling) to the server").font(.subheadline)
+                        if let fraction {
+                            ProgressView(value: min(1, max(0, fraction)))
+                            Text(String(format: "%.0f%%  %@", fraction * 100, pullStatus)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        } else {
+                            HStack(spacing: 8) { ProgressView(); Text(pullStatus).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        }
+                        Button("Cancel", role: .destructive) { pullTask?.cancel() }
+                    }
+                } else {
+                    TextField("Model name, e.g. qwen2.5:7b", text: $name)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    Button { add(name) } label: { Label("Download to server", systemImage: "arrow.down.circle") }
+                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            } header: {
+                Text("Add a model")
+            } footer: {
+                Text("Use a name from ollama.com/library. For a GGUF file on Hugging Face, type hf.co/ followed by the repository, a colon and the version, for example hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M. Keep this screen open while it downloads; if it is interrupted, starting again continues where it stopped.")
+            }
+
+            if pulling == nil {
+                Section {
+                    ForEach(suggestions, id: \.0) { suggestion in
+                        Button { add(suggestion.0) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestion.0).foregroundStyle(.primary)
+                                Text(suggestion.1).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Suggestions")
+                }
+            }
+        }
+        .navigationTitle("Server models")
+        .navigationBarTitleDisplayMode(.inline)
+        .alert("Something went wrong", isPresented: Binding(get: { lastError != nil }, set: { if !$0 { lastError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(lastError ?? "")
+        }
+        .task { await refresh() }
+        .refreshable { await refresh() }
+        .onDisappear { pullTask?.cancel() }
+    }
+
+    private func refresh() async {
+        do {
+            items = try await OllamaAdmin.current().list()
+            status = items.isEmpty ? "No models on the server yet." : ""
+        } catch {
+            items = []
+            status = error.localizedDescription
+        }
+    }
+
+    private func add(_ raw: String) {
+        let model = raw.trimmingCharacters(in: .whitespaces)
+        guard !model.isEmpty, pulling == nil else { return }
+        pulling = model
+        pullStatus = "Starting…"
+        fraction = nil
+        UIApplication.shared.isIdleTimerDisabled = true
+        pullTask = Task {
+            var failure: String?
+            do {
+                for try await progress in try OllamaAdmin.current().pull(model) {
+                    pullStatus = progress.status
+                    fraction = progress.fraction
+                }
+            } catch is CancellationError {
+            } catch {
+                if !Task.isCancelled { failure = error.localizedDescription }
+            }
+            UIApplication.shared.isIdleTimerDisabled = false
+            pulling = nil
+            name = ""
+            await refresh()
+            if let failure {
+                lastError = failure
+            } else if items.contains(where: { $0.name == model }) {
+                selected = model
+            }
+        }
+    }
+
+    @State private var lastError: String?
+
+    private func remove(_ model: String) {
+        Task {
+            do {
+                try await OllamaAdmin.current().delete(model)
+                if selected == model { selected = "" }
+            } catch {
+                lastError = error.localizedDescription
+            }
+            await refresh()
+        }
     }
 }
