@@ -82,8 +82,28 @@ enum CadClient {
         dimensions in named variables at the top and set $fn = 64; for smooth curves. Build the part from cube, \
         cylinder, sphere, polygon, linear_extrude, rotate_extrude, hull, union, difference and intersection. The \
         part must be one connected solid resting on z = 0. Make holes slightly longer than the material they cut \
-        through. Do not use import(), surface(), text() or external libraries. When given an error message, send \
-        the full corrected code again.
+        through. Do not use import(), surface(), text() or external libraries.
+
+        OpenSCAD rules you must follow:
+        - Variables hold numbers and lists only. A shape can never be stored in a variable: never write \
+        name = cube(...); or name = linear_extrude(...) ...;
+        - To name or reuse a shape, define a module: module name() { ... } and then call it with name();
+        - Every statement ends with a semicolon, and every opening bracket has a closing one.
+        - Keep it short. Do not add parts that were not asked for.
+
+        Example of a correct answer for "a wedge, 30 mm base, 20 mm high, 15 mm deep":
+
+        ```openscad
+        $fn = 64;
+        base = 30;
+        height = 20;
+        depth = 15;
+
+        linear_extrude(height = depth)
+            polygon([[0, 0], [base, 0], [0, height]]);
+        ```
+
+        When given an error message, find the line it names, fix it, and send the full corrected code again.
         """
 }
 

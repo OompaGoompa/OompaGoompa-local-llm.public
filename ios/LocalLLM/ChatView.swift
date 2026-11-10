@@ -176,7 +176,7 @@ struct MessageRow: View {
             if message.text.isEmpty && !isUser {
                 ProgressView().padding(10)
             } else if !message.text.isEmpty {
-                Text(rendered)
+                bubbleContent
                     .textSelection(.enabled)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -264,10 +264,32 @@ struct MessageRow: View {
         return ReplyFiles.extract(from: message.text)
     }
 
-    /// Bold, italics, code and links are shown; anything that is not valid Markdown stays as plain text.
-    private var rendered: AttributedString {
+    /// Ordinary text and code blocks are shown differently: code keeps its line breaks and scrolls sideways.
+    @ViewBuilder private var bubbleContent: some View {
+        let parts = isUser ? [ReplyPart(id: 0, isCode: false, text: message.text)] : ReplyPart.split(message.text)
+        if parts.count == 1, !parts[0].isCode {
+            Text(Self.markdown(parts[0].text))
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(parts) { part in
+                    if part.isCode {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            Text(part.text).font(.system(.footnote, design: .monospaced))
+                        }
+                        .padding(8)
+                        .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+                    } else {
+                        Text(Self.markdown(part.text))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Bold, italics, inline code and links are shown; anything that is not valid Markdown stays as plain text.
+    private static func markdown(_ text: String) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: message.text, options: options)) ?? AttributedString(message.text)
+        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
     }
 }
 
@@ -304,5 +326,36 @@ struct ChatListView: View {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+    }
+}
+
+/// A stretch of a reply: either ordinary text or the inside of a ``` code block.
+struct ReplyPart: Identifiable {
+    let id: Int
+    let isCode: Bool
+    let text: String
+
+    static func split(_ text: String) -> [ReplyPart] {
+        var parts: [ReplyPart] = []
+        var lines: [String] = []
+        var inCode = false
+
+        func flush() {
+            let joined = lines.joined(separator: "\n")
+            lines = []
+            let shown = inCode ? joined : joined.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !shown.isEmpty { parts.append(ReplyPart(id: parts.count, isCode: inCode, text: shown)) }
+        }
+
+        for line in text.components(separatedBy: "\n") {
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                flush()
+                inCode.toggle()
+            } else {
+                lines.append(line)
+            }
+        }
+        flush()
+        return parts.isEmpty ? [ReplyPart(id: 0, isCode: false, text: text)] : parts
     }
 }

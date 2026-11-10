@@ -5,8 +5,8 @@ options:
     iOS: "16.4"
 settings:
   base:
-    MARKETING_VERSION: "1.8.0"
-    CURRENT_PROJECT_VERSION: "10"
+    MARKETING_VERSION: "1.8.1"
+    CURRENT_PROJECT_VERSION: "11"
     SWIFT_VERSION: "5.0"
 targets:
   LocalLLM:
