@@ -10,6 +10,8 @@ struct ReplyFile: Identifiable {
     let content: String
     /// Set for files that are not plain text (a packaged .3mf).
     var data: Data? = nil
+    /// The 3D shape, when the file is one, for the built-in viewer.
+    var mesh: ThreeMF.Mesh? = nil
 }
 
 enum ReplyFiles {
@@ -84,7 +86,7 @@ enum ReplyFiles {
                 let count = (used["3mf"] ?? 0) + 1
                 used["3mf"] = count
                 files.append(ReplyFile(name: count == 1 ? "model.3mf" : "model-\(count).3mf", language: "3mf",
-                                       content: packed.summary, data: packed.data))
+                                       content: packed.summary, data: packed.data, mesh: ThreeMF.mesh(from: content)))
             }
         }
 
@@ -262,6 +264,12 @@ enum ThreeMF {
     }
 }
 
+struct ViewedModel: Identifiable {
+    let id = UUID()
+    let mesh: ThreeMF.Mesh
+    let title: String
+}
+
 /// Lists the files in a reply and sends any of them to the Files app or another app.
 struct SaveFilesView: View {
     @Environment(\.dismiss) private var dismiss
@@ -271,6 +279,7 @@ struct SaveFilesView: View {
     @State private var share: ShareItem?
     @State private var failed = false
     @State private var notAModel = false
+    @State private var viewing: ViewedModel?
 
     private static let types = ["txt", "md", "html", "css", "js", "json", "csv", "xml", "svg", "py", "sh", "swift",
                                 "java", "c", "cpp", "sql", "yaml", "stl", "obj", "scad", "gcode", "3mf"]
@@ -316,6 +325,13 @@ struct SaveFilesView: View {
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(6)
+                        if let mesh = file.mesh {
+                            Button {
+                                viewing = ViewedModel(mesh: mesh, title: file.name)
+                            } label: {
+                                Label("View in 3D", systemImage: "rotate.3d")
+                            }
+                        }
                         Button {
                             if let data = file.data {
                                 send(name: file.name, data: data)
@@ -355,6 +371,9 @@ struct SaveFilesView: View {
             }
             .sheet(item: $share) { item in
                 ActivityView(items: [item.url])
+            }
+            .sheet(item: $viewing) { model in
+                ModelPreviewView(mesh: model.mesh, title: model.title)
             }
             .alert("The file could not be written.", isPresented: $failed) {
                 Button("OK", role: .cancel) {}

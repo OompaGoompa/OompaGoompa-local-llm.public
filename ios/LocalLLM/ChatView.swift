@@ -157,10 +157,14 @@ struct MessageRow: View {
     let isLast: Bool
 
     @State private var showFiles = false
+    @State private var viewing: ViewedModel?
 
     private var isUser: Bool { message.role == "user" }
 
     var body: some View {
+        let files = replyFiles
+        let fileCount = files.count
+        let model = files.first(where: { $0.mesh != nil })
         VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
             if let name = message.attachmentName {
                 Label(name, systemImage: "doc.text").font(.caption).foregroundStyle(.secondary)
@@ -180,9 +184,16 @@ struct MessageRow: View {
                         Button { showFiles = true } label: { Label("Save as file…", systemImage: "square.and.arrow.down") }
                     }
             }
-            if !isUser, !message.text.isEmpty, !(isLast && app.isGenerating), fileCount > 0 {
-                Button { showFiles = true } label: {
-                    Label(fileCount == 1 ? "Save as file" : "Save as files (\(fileCount))", systemImage: "square.and.arrow.down")
+            if fileCount > 0 {
+                HStack(spacing: 8) {
+                    if let model, let mesh = model.mesh {
+                        Button { viewing = ViewedModel(mesh: mesh, title: model.name) } label: {
+                            Label("View in 3D", systemImage: "rotate.3d")
+                        }
+                    }
+                    Button { showFiles = true } label: {
+                        Label(fileCount == 1 ? "Save as file" : "Save as files (\(fileCount))", systemImage: "square.and.arrow.down")
+                    }
                 }
                 .font(.caption)
                 .buttonStyle(.bordered)
@@ -198,11 +209,15 @@ struct MessageRow: View {
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .sheet(isPresented: $showFiles) { SaveFilesView(replyText: message.text) }
+        .sheet(item: $viewing) { model in
+            ModelPreviewView(mesh: model.mesh, title: model.title)
+        }
     }
 
-    /// How many code or data blocks the reply holds. Skipped while the reply is still being written.
-    private var fileCount: Int {
-        message.text.contains("```") ? ReplyFiles.extract(from: message.text).count : 0
+    /// The code or data blocks the reply holds. Skipped while the reply is still being written.
+    private var replyFiles: [ReplyFile] {
+        guard !isUser, !message.text.isEmpty, !(isLast && app.isGenerating), message.text.contains("```") else { return [] }
+        return ReplyFiles.extract(from: message.text)
     }
 
     /// Bold, italics, code and links are shown; anything that is not valid Markdown stays as plain text.
