@@ -23,10 +23,14 @@ retry() {
 install_openscad() {
   command -v openscad >/dev/null 2>&1 && return 0
   if command -v dnf >/dev/null 2>&1; then
-    # Oracle Linux keeps OpenSCAD in its EPEL mirror, which needs the CodeReady Builder repository alongside.
-    sudo dnf install -y oracle-epel-release-el9 2>/dev/null || sudo dnf install -y epel-release 2>/dev/null || true
-    sudo dnf config-manager --set-enabled ol9_codeready_builder 2>/dev/null || sudo dnf config-manager --set-enabled crb 2>/dev/null || true
-    sudo dnf install -y openscad
+    # Oracle Linux keeps OpenSCAD in its EPEL mirror (ol9_developer_EPEL), which is installed but switched off
+    # by default, and needs the CodeReady Builder repository alongside.
+    sudo dnf install -y oracle-epel-release-el9 >/dev/null 2>&1 || sudo dnf install -y epel-release >/dev/null 2>&1 || true
+    sudo dnf config-manager --set-enabled ol9_developer_EPEL >/dev/null 2>&1 || true
+    sudo dnf config-manager --set-enabled ol9_codeready_builder >/dev/null 2>&1 || sudo dnf config-manager --set-enabled crb >/dev/null 2>&1 || true
+    sudo dnf install -y --enablerepo=ol9_developer_EPEL --enablerepo=ol9_codeready_builder openscad \
+      || sudo dnf install -y openscad \
+      || { sudo dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && sudo dnf install -y openscad; }
   elif command -v apt-get >/dev/null 2>&1; then
     sudo apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openscad
   fi
