@@ -90,12 +90,22 @@ def to_ascii(data):
     return "\n".join(lines) + "\n"
 
 
+def quiet_env(home):
+    """OpenSCAD looks up folders under HOME at start-up and crashes if it cannot reach them."""
+    return dict(os.environ, QT_QPA_PLATFORM="offscreen", HOME=home, XDG_CACHE_HOME=home, XDG_CONFIG_HOME=home,
+                XDG_DATA_HOME=home)
+
+
 def version():
+    work = tempfile.mkdtemp(prefix="llmcad-")
     try:
-        r = subprocess.run([OPENSCAD, "--version"], capture_output=True, timeout=20)
-        return (r.stdout + r.stderr).decode("utf-8", "replace").strip().splitlines()[0]
+        r = subprocess.run([OPENSCAD, "--version"], capture_output=True, timeout=20, cwd=work, env=quiet_env(work))
+        lines = (r.stdout + r.stderr).decode("utf-8", "replace").strip().splitlines()
+        return lines[0] if lines else "OpenSCAD"
     except Exception as e:  # noqa: BLE001
         return "openscad not working: %s" % e
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
 
 
 def render(source):
@@ -106,7 +116,7 @@ def render(source):
         out = os.path.join(work, "model.stl")
         with open(src, "wb") as f:
             f.write(source)
-        env = dict(os.environ, QT_QPA_PLATFORM="offscreen", HOME=work, XDG_CACHE_HOME=work, XDG_CONFIG_HOME=work)
+        env = quiet_env(work)
         log = b""
         for extra in (["--export-format", "asciistl"], []):
             try:
@@ -177,6 +187,7 @@ Wants=network-online.target
 [Service]
 User=llmcad
 Environment=LLM_CAD_PORT=$PORT
+Environment=HOME=/tmp
 ExecStart=/usr/bin/env python3 $DIR/cad_server.py
 Restart=always
 RestartSec=3
