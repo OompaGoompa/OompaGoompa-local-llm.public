@@ -1,6 +1,7 @@
 import Foundation
 import Security
 import SwiftUI
+import UIKit
 
 /// Small wrapper for keeping the server key out of plain settings.
 enum Keychain {
@@ -153,6 +154,17 @@ struct RemoteView: View {
             }
 
             Section {
+                NavigationLink("Set up my own server (step by step)") {
+                    ServerSetupView { chosen in
+                        address = chosen
+                        connect()
+                    }
+                }
+            } footer: {
+                Text("For a cloud VM such as Oracle's, using only this phone.")
+            }
+
+            Section {
                 TextField("http://192.168.1.20:11434", text: $address)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -215,6 +227,73 @@ struct RemoteView: View {
                 status = error.localizedDescription
             }
             busy = false
+        }
+    }
+}
+
+/// Walks through turning a cloud VM into a private model server using only the phone.
+struct ServerSetupView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onUse: (String) -> Void
+    @State private var copied = false
+    @State private var manualIP = ""
+
+    static let command = "curl -fsSL https://raw.githubusercontent.com/OompaGoompa/OompaGoompa-local-llm.public/app/server/setup.sh | bash"
+
+    var body: some View {
+        Form {
+            Section {
+                step(1, "Get two free apps from the App Store", "Tailscale (a private link between your phone and the server) and an SSH app such as Termius (to type one command on the server).")
+                step(2, "Add your server in the SSH app", "Address: the server's public IP from your cloud console. Username: ubuntu on Ubuntu, opc on Oracle Linux. Key: the private key file you saved when you created the server.")
+                step(3, "Connect and paste this command", "It installs everything and downloads a model sized for the server. It takes about 5 to 15 minutes.")
+                Text(Self.command).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
+                Button {
+                    UIPasteboard.general.string = Self.command
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy the command", systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                step(4, "Sign in to Tailscale when a link appears", "The command pauses and shows a link. Open it and sign in. Then open the Tailscale app on this phone, sign in with the same account and switch it on.")
+                step(5, "Connect this app", "When the command says Done, tap the button below.")
+            } header: {
+                Text("One-time setup")
+            }
+
+            Section {
+                Button("Use my server") {
+                    onUse("http://llm-server:11434")
+                    dismiss()
+                }
+            } footer: {
+                Text("Keep Tailscale switched on whenever you chat with the server.")
+            }
+
+            Section {
+                TextField("100.x.y.z", text: $manualIP)
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocorrectionDisabled()
+                Button("Use this address instead") {
+                    onUse("http://\(manualIP.trimmingCharacters(in: .whitespaces)):11434")
+                    dismiss()
+                }
+                .disabled(manualIP.trimmingCharacters(in: .whitespaces).isEmpty)
+            } header: {
+                Text("If it does not connect")
+            } footer: {
+                Text("Enter the 100.x.y.z address the command printed at the end. It is also shown next to llm-server in the Tailscale app.")
+            }
+        }
+        .navigationTitle("Server setup")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private func step(_ number: Int, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(number)").font(.headline).frame(width: 22, height: 22).background(Color.accentColor.opacity(0.2), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 }
