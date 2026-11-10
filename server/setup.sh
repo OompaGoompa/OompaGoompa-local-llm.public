@@ -79,6 +79,16 @@ elif command -v iptables >/dev/null 2>&1; then
 fi
 
 say "3/4 Ollama (runs the models)"
+# Ollama's installer unpacks with zstd, which a fresh Oracle Linux or Ubuntu image may not have.
+install_zstd() {
+  command -v zstd >/dev/null 2>&1 && return 0
+  if   command -v dnf     >/dev/null 2>&1; then sudo dnf install -y zstd
+  elif command -v yum     >/dev/null 2>&1; then sudo yum install -y zstd
+  elif command -v apt-get >/dev/null 2>&1; then sudo apt-get update -y && sudo apt-get install -y zstd
+  fi
+  command -v zstd >/dev/null 2>&1
+}
+retry 10 30 install_zstd || echo "   zstd could not be installed; trying Ollama anyway"
 if ! retry 5 30 install_ollama; then
   echo "FAILED: Ollama could not be installed."
   exit 1
