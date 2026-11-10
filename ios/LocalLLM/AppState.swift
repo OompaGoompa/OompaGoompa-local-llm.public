@@ -81,6 +81,10 @@ final class AppState: ObservableObject {
         return max(1000, (ctx - reply - 400) * 3)
     }
 
+    /// True when chats go to a model on another computer instead of the one on this phone.
+    var remoteOn: Bool { defaults.bool(forKey: Keys.remoteEnabled) }
+    var remoteModelName: String { defaults.string(forKey: Keys.remoteModel) ?? "" }
+
     // MARK: - Sending files out
 
     /// Opens the share sheet with the text as a .txt file (AirDrop, Save to Files, Mail, ...).
@@ -337,7 +341,7 @@ final class AppState: ObservableObject {
 
     func send(_ text: String, attachment: Attachment?) {
         guard !isGenerating else { return }
-        guard selectedModel != nil else {
+        guard remoteOn || selectedModel != nil else {
             errorText = AppError.noModel.errorDescription
             return
         }
@@ -372,9 +376,6 @@ final class AppState: ObservableObject {
             let started = Date()
             var firstPiece: Date?
             do {
-                try await ensureLoaded()
-                try Task.checkCancellation()
-
                 var turns: [ChatTurn] = []
                 let prompt = (defaults.string(forKey: Keys.promptText) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 if defaults.bool(forKey: Keys.promptEnabled), !prompt.isEmpty {
@@ -384,14 +385,22 @@ final class AppState: ObservableObject {
                     turns.append(ChatTurn(role: m.role, content: m.promptContent))
                 }
 
-                for try await piece in engine.generate(turns: turns, sampling: samplingConfig) {
+                let stream: AsyncThrowingStream<String, Error>
+                if remoteOn {
+                    stream = try RemoteClient.current().chat(turns: turns, sampling: samplingConfig)
+                } else {
+                    try await ensureLoaded()
+                    try Task.checkCancellation()
+                    stream = engine.generate(turns: turns, sampling: samplingConfig)
+                }
+                for try await piece in stream {
                     if firstPiece == nil { firstPiece = Date() }
                     pieces += 1
                     appendToReply(piece, chatID: chatID)
                 }
             } catch is CancellationError {
             } catch {
-                errorText = error.localizedDescription
+                if !Task.isCancelled { errorText = error.localizedDescription }
             }
             if let firstPiece, pieces > 1 {
                 let seconds = max(0.001, Date().timeIntervalSince(firstPiece))

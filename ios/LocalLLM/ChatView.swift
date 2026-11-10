@@ -68,8 +68,11 @@ struct ChatView: View {
 
     private var emptyState: some View {
         VStack(spacing: 8) {
-            Image(systemName: "cpu").font(.largeTitle).foregroundStyle(.secondary)
-            if let model = app.selectedModel {
+            Image(systemName: app.remoteOn ? "network" : "cpu").font(.largeTitle).foregroundStyle(.secondary)
+            if app.remoteOn {
+                Text(app.remoteModelName.isEmpty ? "Remote server" : app.remoteModelName).font(.headline).multilineTextAlignment(.center)
+                Text("Runs on your remote server. Messages are sent there.").font(.footnote).foregroundStyle(.secondary)
+            } else if let model = app.selectedModel {
                 Text(model).font(.headline).multilineTextAlignment(.center)
                 Text("Runs entirely on this phone. Nothing leaves it.").font(.footnote).foregroundStyle(.secondary)
             } else {

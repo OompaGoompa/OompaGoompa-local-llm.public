@@ -87,6 +87,10 @@ enum Keys {
     static let promptEnabled = "promptEnabled"
     static let promptText = "promptText"
     static let promptPresets = "promptPresets"
+    static let remoteEnabled = "remoteEnabled"
+    static let remoteURL = "remoteURL"
+    static let remoteModel = "remoteModel"
+    static let remoteKey = "remoteKey"
 
     static var defaultThreads: Int { max(2, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)) }
 

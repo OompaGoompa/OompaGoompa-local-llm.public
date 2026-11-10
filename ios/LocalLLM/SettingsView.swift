@@ -13,6 +13,7 @@ struct SettingsView: View {
     @AppStorage(Keys.repeatPenalty) private var repeatPenalty = 1.1
     @AppStorage(Keys.maxTokens) private var maxTokens = 512
     @AppStorage(Keys.promptEnabled) private var promptEnabled = true
+    @AppStorage(Keys.remoteEnabled) private var remoteEnabled = false
 
     private let templates = ["chatml", "llama3", "llama4", "gemma", "phi3", "phi4", "mistral-v3", "mistral-v7", "deepseek3", "zephyr", "vicuna", "granite", "gpt-oss"]
 
@@ -30,6 +31,16 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        RemoteView()
+                    } label: {
+                        LabeledContent("Remote server", value: remoteEnabled ? "On" : "Off")
+                    }
+                } footer: {
+                    Text("Run bigger models on your own computer or a hosted service and chat with them from here.")
+                }
+
+                Section {
                     Picker("Context size", selection: $contextSize) {
                         ForEach([1024, 2048, 4096, 8192], id: \.self) { Text("\($0) tokens").tag($0) }
                     }
@@ -39,7 +50,7 @@ struct SettingsView: View {
                     Stepper("CPU threads: \(threads)", value: $threads, in: 1...8)
                     Toggle("Allow oversized models", isOn: $allowOversized)
                 } header: {
-                    Text("Memory and load")
+                    Text("Memory and load (on this phone)")
                 } footer: {
                     Text("Context size is how much conversation the model keeps in mind: smaller uses less memory, and the oldest messages are forgotten once it is full. Compact working memory stores that conversation in 8-bit form, about half the size (experimental; it is skipped if the model does not support it). The GPU is faster and easier on the battery. Changes apply on the next message.")
                 }
