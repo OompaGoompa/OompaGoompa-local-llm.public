@@ -6,7 +6,10 @@ struct ReplyFile: Identifiable {
     let id = UUID()
     var name: String
     let language: String
+    /// The text of the file, or a short description when the file is binary.
     let content: String
+    /// Set for files that are not plain text (a packaged .3mf).
+    var data: Data? = nil
 }
 
 enum ReplyFiles {
@@ -19,13 +22,15 @@ enum ReplyFiles {
         "rb": "rb", "sql": "sql", "yaml": "yaml", "yml": "yaml", "toml": "toml", "kotlin": "kt", "kt": "kt",
         "lua": "lua", "r": "r", "tex": "tex", "latex": "tex", "text": "txt", "txt": "txt", "plaintext": "txt",
         "ini": "ini", "powershell": "ps1", "ps1": "ps1", "bat": "bat", "dart": "dart", "scala": "scala",
-        "perl": "pl", "vue": "vue", "graphql": "graphql", "diff": "diff", "log": "log"
+        "perl": "pl", "vue": "vue", "graphql": "graphql", "diff": "diff", "log": "log",
+        "stl": "stl", "obj": "obj", "scad": "scad", "openscad": "scad", "gcode": "gcode", "3mf": "model"
     ]
 
     /// Works out the extension when the reply did not label the block.
     private static func sniff(_ content: String) -> String {
         let start = content.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if start.hasPrefix("<svg") { return "svg" }
+        if start.hasPrefix("solid"), start.contains("facet") { return "stl" }
         if start.hasPrefix("<!doctype html") || start.hasPrefix("<html") { return "html" }
         if start.hasPrefix("<?xml") { return "xml" }
         if start.hasPrefix("{") || start.hasPrefix("["),
@@ -73,6 +78,14 @@ enum ReplyFiles {
                 name = count == 1 ? "\(base).\(ext)" : "\(base)-\(count).\(ext)"
             }
             files.append(ReplyFile(name: safeName(name ?? "file.txt"), language: language, content: content + "\n"))
+
+            // A 3D model written as text (3MF XML, STL or OBJ) is also offered as a ready-to-print .3mf.
+            if let packed = ThreeMF.package(content) {
+                let count = (used["3mf"] ?? 0) + 1
+                used["3mf"] = count
+                files.append(ReplyFile(name: count == 1 ? "model.3mf" : "model-\(count).3mf", language: "3mf",
+                                       content: packed.summary, data: packed.data))
+            }
         }
 
         for line in text.components(separatedBy: "\n") {
@@ -92,16 +105,160 @@ enum ReplyFiles {
     }
 
     /// Writes the file under its exact name so the share sheet and the Files app keep the extension.
-    static func write(name: String, content: String) -> URL? {
+    static func write(name: String, data: Data) -> URL? {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let url = dir.appendingPathComponent(safeName(name))
-            try content.write(to: url, atomically: true, encoding: .utf8)
+            try data.write(to: url, options: .atomic)
             return url
         } catch {
             return nil
         }
+    }
+}
+
+/// Turns a 3D model the AI wrote as text into a real .3mf file (a zip package around the model XML).
+enum ThreeMF {
+    struct Mesh {
+        var vertices: [(Double, Double, Double)] = []
+        var triangles: [(Int, Int, Int)] = []
+    }
+
+    static func package(_ text: String) -> (data: Data, summary: String)? {
+        let lower = text.lowercased()
+        if lower.contains("<model"), lower.contains("3dmanufacturing"), lower.contains("<triangle") {
+            // Already 3MF model XML: wrap it as it is.
+            var xml = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !xml.hasPrefix("<?xml") { xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" + xml }
+            let triangles = lower.components(separatedBy: "<triangle ").count - 1
+            return (zip(modelXML: xml), "3D model packaged from the 3MF text above: \(triangles) triangles.")
+        }
+        var mesh: Mesh?
+        if lower.contains("facet"), lower.contains("vertex") {
+            mesh = parseSTL(text)
+        } else if text.contains("\nf ") || text.hasPrefix("f "), text.contains("v ") {
+            mesh = parseOBJ(text)
+        }
+        guard let mesh, !mesh.triangles.isEmpty else { return nil }
+        return (zip(modelXML: modelXML(mesh)),
+                "3D model converted to 3MF: \(mesh.triangles.count) triangles, \(mesh.vertices.count) points, in millimetres.")
+    }
+
+    private static func numbers(_ line: Substring) -> [Double] {
+        line.split(whereSeparator: { $0 == " " || $0 == "\t" }).compactMap { Double($0) }
+    }
+
+    static func parseSTL(_ text: String) -> Mesh {
+        var mesh = Mesh()
+        var index: [String: Int] = [:]
+        var corner: [Int] = []
+        for raw in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = raw.drop(while: { $0 == " " || $0 == "\t" })
+            guard line.lowercased().hasPrefix("vertex") else { continue }
+            let n = numbers(line.dropFirst(6))
+            guard n.count >= 3 else { continue }
+            let key = "\(n[0]) \(n[1]) \(n[2])"
+            let id: Int
+            if let found = index[key] {
+                id = found
+            } else {
+                id = mesh.vertices.count
+                index[key] = id
+                mesh.vertices.append((n[0], n[1], n[2]))
+            }
+            corner.append(id)
+            if corner.count == 3 {
+                if corner[0] != corner[1], corner[1] != corner[2], corner[0] != corner[2] {
+                    mesh.triangles.append((corner[0], corner[1], corner[2]))
+                }
+                corner = []
+            }
+        }
+        return mesh
+    }
+
+    static func parseOBJ(_ text: String) -> Mesh {
+        var mesh = Mesh()
+        for raw in text.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+            let line = raw.drop(while: { $0 == " " || $0 == "\t" })
+            if line.hasPrefix("v ") {
+                let n = numbers(line.dropFirst(2))
+                if n.count >= 3 { mesh.vertices.append((n[0], n[1], n[2])) }
+            } else if line.hasPrefix("f ") {
+                // "f 1 2 3", "f 1/1/1 2/2/2 3/3/3", negative numbers count back from the end; polygons are fanned.
+                let ids: [Int] = line.dropFirst(2).split(separator: " ").compactMap { part in
+                    guard let first = part.split(separator: "/", omittingEmptySubsequences: false).first, let v = Int(first) else { return nil }
+                    return v > 0 ? v - 1 : mesh.vertices.count + v
+                }
+                guard ids.count >= 3, ids.allSatisfy({ $0 >= 0 && $0 < mesh.vertices.count }) else { continue }
+                for i in 1..<(ids.count - 1) { mesh.triangles.append((ids[0], ids[i], ids[i + 1])) }
+            }
+        }
+        return mesh
+    }
+
+    static func modelXML(_ mesh: Mesh) -> String {
+        var xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml += "<model unit=\"millimeter\" xml:lang=\"en-US\" xmlns=\"http://schemas.microsoft.com/3dmanufacturing/core/2015/02\">\n"
+        xml += " <resources>\n  <object id=\"1\" type=\"model\">\n   <mesh>\n    <vertices>\n"
+        for v in mesh.vertices { xml += "     <vertex x=\"\(v.0)\" y=\"\(v.1)\" z=\"\(v.2)\"/>\n" }
+        xml += "    </vertices>\n    <triangles>\n"
+        for t in mesh.triangles { xml += "     <triangle v1=\"\(t.0)\" v2=\"\(t.1)\" v3=\"\(t.2)\"/>\n" }
+        xml += "    </triangles>\n   </mesh>\n  </object>\n </resources>\n <build>\n  <item objectid=\"1\"/>\n </build>\n</model>\n"
+        return xml
+    }
+
+    // MARK: - Zip (stored, no compression)
+
+    private static let crcTable: [UInt32] = (0..<256).map { i -> UInt32 in
+        var c = UInt32(i)
+        for _ in 0..<8 { c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1) }
+        return c
+    }
+
+    private static func crc32(_ data: Data) -> UInt32 {
+        var c: UInt32 = 0xFFFF_FFFF
+        for byte in data { c = crcTable[Int((c ^ UInt32(byte)) & 0xFF)] ^ (c >> 8) }
+        return c ^ 0xFFFF_FFFF
+    }
+
+    static func zip(modelXML: String) -> Data {
+        let types = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"model\" ContentType=\"application/vnd.ms-package.3dmanufacturing-3dmodel+xml\"/></Types>\n"
+        let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Target=\"/3D/3dmodel.model\" Id=\"rel0\" Type=\"http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel\"/></Relationships>\n"
+        let entries: [(String, Data)] = [
+            ("[Content_Types].xml", Data(types.utf8)),
+            ("_rels/.rels", Data(rels.utf8)),
+            ("3D/3dmodel.model", Data(modelXML.utf8))
+        ]
+
+        var out = Data()
+        var central = Data()
+        func u16(_ v: Int) -> Data { Data([UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF)]) }
+        func u32(_ v: UInt32) -> Data { Data([UInt8(v & 0xFF), UInt8((v >> 8) & 0xFF), UInt8((v >> 16) & 0xFF), UInt8((v >> 24) & 0xFF)]) }
+
+        for (name, data) in entries {
+            let nameBytes = Data(name.utf8)
+            let crc = crc32(data)
+            let offset = UInt32(out.count)
+            let size = UInt32(data.count)
+            // Shared by the local header and the directory entry: version, flags, method, time, date, crc, sizes, name length, extra length.
+            let commonParts: [Data] = [u16(20), u16(0), u16(0), u16(0), u16(0x21), u32(crc), u32(size), u32(size), u16(nameBytes.count), u16(0)]
+            var common = Data()
+            for part in commonParts { common.append(part) }
+
+            let localParts: [Data] = [u32(0x0403_4B50), common, nameBytes, data]
+            for part in localParts { out.append(part) }
+
+            let directoryParts: [Data] = [u32(0x0201_4B50), u16(20), common, u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes]
+            for part in directoryParts { central.append(part) }
+        }
+        let start = UInt32(out.count)
+        let count = entries.count
+        out.append(central)
+        let endParts: [Data] = [u32(0x0605_4B50), u16(0), u16(0), u16(count), u16(count), u32(UInt32(central.count)), u32(start), u16(0)]
+        for part in endParts { out.append(part) }
+        return out
     }
 }
 
@@ -127,12 +284,12 @@ struct SaveFilesView: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(6)
                         Button {
-                            send(name: file.name, content: file.content)
+                            send(name: file.name, data: file.data ?? Data(file.content.utf8))
                         } label: {
                             Label("Save or share", systemImage: "square.and.arrow.down")
                         }
                     } header: {
-                        Text(size(file.content))
+                        Text(file.data.map { String(format: "3D model · %.1f KB", Double($0.count) / 1024) } ?? size(file.content))
                     }
                 }
 
@@ -141,7 +298,7 @@ struct SaveFilesView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Button {
-                        send(name: wholeName, content: replyText)
+                        send(name: wholeName, data: Data(replyText.utf8))
                     } label: {
                         Label("Save or share the whole reply", systemImage: "doc.text")
                     }
@@ -170,8 +327,8 @@ struct SaveFilesView: View {
         }
     }
 
-    private func send(name: String, content: String) {
-        if let url = ReplyFiles.write(name: name, content: content) {
+    private func send(name: String, data: Data) {
+        if let url = ReplyFiles.write(name: name, data: data) {
             share = ShareItem(url: url)
         } else {
             failed = true
