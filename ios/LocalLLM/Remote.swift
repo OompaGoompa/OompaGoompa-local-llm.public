@@ -584,7 +584,7 @@ struct ServerModelsView: View {
             } header: {
                 Text("Add a model")
             } footer: {
-                Text("Use a name from ollama.com/library. For a GGUF file on Hugging Face, type hf.co/ followed by the repository, a colon and the version, for example hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M. Keep this screen open while it downloads; if it is interrupted, starting again continues where it stopped.")
+                Text("Use a name from ollama.com/library. For a GGUF file on Hugging Face, type hf.co/ followed by the repository, a colon and the version, for example hf.co/bartowski/Llama-3.2-3B-Instruct-GGUF:Q4_K_M. You can switch apps or lock the phone while it downloads, but stay on this screen in the app; if it is interrupted, starting again continues where it stopped.")
             }
 
             if pulling == nil {
@@ -631,6 +631,7 @@ struct ServerModelsView: View {
         pullStatus = "Starting…"
         fraction = nil
         UIApplication.shared.isIdleTimerDisabled = true
+        BackgroundKeeper.shared.begin()
         pullTask = Task {
             var failure: String?
             do {
@@ -648,9 +649,12 @@ struct ServerModelsView: View {
             await refresh()
             if let failure {
                 lastError = failure
+                BackgroundKeeper.shared.notify(title: "The model download stopped", body: failure)
             } else if items.contains(where: { $0.name == model }) {
                 selected = model
+                BackgroundKeeper.shared.notify(title: "Model downloaded to the server", body: model)
             }
+            BackgroundKeeper.shared.end()
         }
     }
 

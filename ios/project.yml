@@ -5,8 +5,8 @@ options:
     iOS: "16.4"
 settings:
   base:
-    MARKETING_VERSION: "1.8.1"
-    CURRENT_PROJECT_VERSION: "11"
+    MARKETING_VERSION: "1.9.0"
+    CURRENT_PROJECT_VERSION: "12"
     SWIFT_VERSION: "5.0"
 targets:
   LocalLLM:
@@ -35,6 +35,8 @@ targets:
         # Remote server mode talks to the user's own computer, usually over plain http on the local network.
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # Lets replies from the server and downloads finish while the app is not on screen.
+        UIBackgroundModes: [audio]
         NSLocalNetworkUsageDescription: Local LLM connects to model servers you set up on your own network.
         # The app's folder shows up in the Files app, so models and chats can be moved in and out.
         UIFileSharingEnabled: true

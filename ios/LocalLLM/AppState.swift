@@ -30,6 +30,7 @@ final class AppState: ObservableObject {
     private let engine = LlamaEngine()
     private var loadedConfig: EngineConfig?
     private var genTask: Task<Void, Never>?
+    private var generatingRemotely = false
     private var downloader: Downloader?
     private var memTimer: Timer?
 
@@ -210,6 +211,7 @@ final class AppState: ObservableObject {
         downloader?.cancel()
         let d = Downloader()
         downloader = d
+        if downloadName == nil { BackgroundKeeper.shared.begin() }
         downloadName = url.lastPathComponent
         downloadDone = 0
         downloadTotal = 0
@@ -224,9 +226,16 @@ final class AppState: ObservableObject {
         d.onDone = { [weak self] result in
             Task { @MainActor in
                 guard let self else { return }
+                let wasActive = self.downloadName != nil
                 self.downloadName = nil
                 self.downloader = nil
                 self.setBusy(self.isGenerating)
+                if wasActive {
+                    if case .success(let file) = result {
+                        BackgroundKeeper.shared.notify(title: "Model downloaded", body: file.lastPathComponent)
+                    }
+                    BackgroundKeeper.shared.end()
+                }
                 switch result {
                 case .success(let dest):
                     self.refreshModels()
@@ -244,6 +253,7 @@ final class AppState: ObservableObject {
     func cancelDownload() {
         downloader?.cancel()
         downloader = nil
+        if downloadName != nil { BackgroundKeeper.shared.end() }
         downloadName = nil
         setBusy(isGenerating)
     }
@@ -371,6 +381,10 @@ final class AppState: ObservableObject {
         isGenerating = true
         setBusy(true)
         let chatID = currentID
+        // A reply coming from the server can carry on while the app is in the background.
+        let remote = remoteOn
+        generatingRemotely = remote
+        if remote { BackgroundKeeper.shared.begin() }
         genTask = Task {
             var pieces = 0
             let started = Date()
@@ -416,9 +430,19 @@ final class AppState: ObservableObject {
                 conversations[i].messages.removeLast()
             }
             isGenerating = false
+            generatingRemotely = false
             setBusy(downloadName != nil || importStatus != nil)
             save(chatID)
             refreshMemory()
+            if remote {
+                let reply = conversations.first(where: { $0.id == chatID })?.messages.last
+                if let reply, reply.role == "assistant", !reply.text.isEmpty {
+                    BackgroundKeeper.shared.notify(title: "Reply ready", body: reply.text)
+                } else if errorText != nil {
+                    BackgroundKeeper.shared.notify(title: "The reply stopped", body: errorText ?? "")
+                }
+                BackgroundKeeper.shared.end()
+            }
         }
     }
 
@@ -439,13 +463,25 @@ final class AppState: ObservableObject {
         let app = UIApplication.shared
         var token = UIBackgroundTaskIdentifier.invalid
         token = app.beginBackgroundTask { app.endBackgroundTask(token) }
+
+        // A reply from the server keeps streaming in the background. A reply from the on-phone model has to
+        // stop, because iOS does not allow the GPU to be used by an app that is not on screen.
+        let keepGoing = isGenerating && generatingRemotely && defaults.bool(forKey: Keys.keepAlive)
         let work = genTask
-        stop()
+        if !keepGoing { stop() }
         Task {
-            await work?.value
+            if !keepGoing { await work?.value }
             save(currentID)
             if defaults.bool(forKey: Keys.unloadOnBackground) {
-                await unloadModel()
+                if keepGoing {
+                    // Free the on-phone model without touching the server reply that is still running.
+                    await engine.unload()
+                    loadedModel = nil
+                    loadedInfo = nil
+                    loadedConfig = nil
+                } else {
+                    await unloadModel()
+                }
             }
             app.endBackgroundTask(token)
         }

@@ -91,6 +91,7 @@ enum Keys {
     static let remoteURL = "remoteURL"
     static let remoteModel = "remoteModel"
     static let remoteKey = "remoteKey"
+    static let keepAlive = "keepAlive"
 
     static var defaultThreads: Int { max(2, min(4, ProcessInfo.processInfo.activeProcessorCount - 2)) }
 
@@ -104,6 +105,7 @@ enum Keys {
             compactKV: false,
             template: "",
             unloadOnBackground: true,
+            keepAlive: true,
             allowOversized: false,
             temperature: 0.7,
             topP: 0.9,

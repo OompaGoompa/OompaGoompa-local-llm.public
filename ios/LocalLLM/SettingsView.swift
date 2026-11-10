@@ -14,6 +14,7 @@ struct SettingsView: View {
     @AppStorage(Keys.maxTokens) private var maxTokens = 512
     @AppStorage(Keys.promptEnabled) private var promptEnabled = true
     @AppStorage(Keys.remoteEnabled) private var remoteEnabled = false
+    @AppStorage(Keys.keepAlive) private var keepAlive = true
 
     private let templates = ["chatml", "llama3", "llama4", "gemma", "phi3", "phi4", "mistral-v3", "mistral-v7", "deepseek3", "zephyr", "vicuna", "granite", "gpt-oss"]
 
@@ -38,6 +39,12 @@ struct SettingsView: View {
                     }
                 } footer: {
                     Text("Run bigger models on your own computer or a hosted service and chat with them from here.")
+                }
+
+                Section {
+                    Toggle("Keep working in the background", isOn: $keepAlive)
+                } footer: {
+                    Text("Replies from your server and downloads carry on when you switch apps or lock the phone, and you get a notification when they finish. It uses a little more battery while work is running. Replies from a model on this phone still stop when you leave, because iOS does not let background apps use the graphics chip.")
                 }
 
                 Section {
