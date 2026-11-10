@@ -270,6 +270,38 @@ struct SaveFilesView: View {
     @State private var wholeName = "reply.md"
     @State private var share: ShareItem?
     @State private var failed = false
+    @State private var notAModel = false
+
+    private static let types = ["txt", "md", "html", "css", "js", "json", "csv", "xml", "svg", "py", "sh", "swift",
+                                "java", "c", "cpp", "sql", "yaml", "stl", "obj", "scad", "gcode", "3mf"]
+
+    private func ending(of name: String) -> String {
+        guard let dot = name.lastIndex(of: "."), dot != name.startIndex else { return "" }
+        return String(name[name.index(after: dot)...]).lowercased()
+    }
+
+    /// A menu of file types; choosing one swaps the ending of the name.
+    private func typePicker(_ name: Binding<String>) -> some View {
+        let current = ending(of: name.wrappedValue)
+        let options = Self.types.contains(current) || current.isEmpty ? Self.types : [current] + Self.types
+        let selection = Binding<String>(
+            get: { ending(of: name.wrappedValue) },
+            set: { chosen in
+                let old = name.wrappedValue
+                let base: String
+                if let dot = old.lastIndex(of: "."), dot != old.startIndex {
+                    base = String(old[..<dot])
+                } else {
+                    base = old.isEmpty ? "file" : old
+                }
+                name.wrappedValue = base + "." + chosen
+            }
+        )
+        return Picker("File type", selection: selection) {
+            if current.isEmpty { Text("None").tag("") }
+            ForEach(options, id: \.self) { Text("." + $0).tag($0) }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -279,12 +311,17 @@ struct SaveFilesView: View {
                         TextField("File name", text: $file.name)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                        if file.data == nil { typePicker($file.name) }
                         Text(preview(file.content))
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .lineLimit(6)
                         Button {
-                            send(name: file.name, data: file.data ?? Data(file.content.utf8))
+                            if let data = file.data {
+                                send(name: file.name, data: data)
+                            } else {
+                                send(name: file.name, text: file.content)
+                            }
                         } label: {
                             Label("Save or share", systemImage: "square.and.arrow.down")
                         }
@@ -297,8 +334,9 @@ struct SaveFilesView: View {
                     TextField("File name", text: $wholeName)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                    typePicker($wholeName)
                     Button {
-                        send(name: wholeName, data: Data(replyText.utf8))
+                        send(name: wholeName, text: replyText)
                     } label: {
                         Label("Save or share the whole reply", systemImage: "doc.text")
                     }
@@ -306,8 +344,8 @@ struct SaveFilesView: View {
                     Text("Whole reply")
                 } footer: {
                     Text(files.isEmpty
-                         ? "This reply has no separate code or data blocks, so it is saved as one file. Change the ending of the name (for example .csv or .html) if the reply is that kind of file."
-                         : "Change a name or its ending before saving if you like. In the share sheet, choose Save to Files to keep it on the phone.")
+                         ? "This reply has no separate code or data blocks, so it is saved as one file. Pick the file type that matches what the reply is."
+                         : "Pick a file type or change a name before saving if you like. In the share sheet, choose Save to Files to keep it on the phone.")
                 }
             }
             .navigationTitle("Save as file")
@@ -321,9 +359,27 @@ struct SaveFilesView: View {
             .alert("The file could not be written.", isPresented: $failed) {
                 Button("OK", role: .cancel) {}
             }
+            .alert("Not a 3D model", isPresented: $notAModel) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("A .3mf needs 3D shape data, and this text has none (it may be a program or an explanation). Ask the AI for an ASCII STL in a code block, then save that as .3mf.")
+            }
             .onAppear {
                 if files.isEmpty { files = ReplyFiles.extract(from: replyText) }
             }
+        }
+    }
+
+    /// Text is written as it is, except for .3mf, which has to be built from 3D shape data in the text.
+    private func send(name: String, text: String) {
+        if ending(of: name) == "3mf" {
+            guard let packed = ThreeMF.package(text) else {
+                notAModel = true
+                return
+            }
+            send(name: name, data: packed.data)
+        } else {
+            send(name: name, data: Data(text.utf8))
         }
     }
 
