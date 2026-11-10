@@ -59,6 +59,16 @@ struct ShareItem: Identifiable {
     let url: URL
 }
 
+struct LinkCheck: Identifiable {
+    enum State {
+        case checking
+        case done(ModelReport)
+        case failed(String)
+    }
+    let id = UUID()
+    let state: State
+}
+
 // MARK: - Settings keys (stored in UserDefaults; views bind with @AppStorage)
 
 enum Keys {

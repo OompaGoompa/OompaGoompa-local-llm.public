@@ -22,6 +22,7 @@ final class AppState: ObservableObject {
     @Published var downloadTotal: Int64 = 0
 
     @Published var shareItem: ShareItem?
+    @Published var linkCheck: LinkCheck?
 
     @Published var memUsed: UInt64 = 0
     @Published var memFree: UInt64 = 0
@@ -165,7 +166,10 @@ final class AppState: ObservableObject {
         }
     }
 
-    func startDownload(_ link: String) {
+    private var checkTask: Task<Void, Never>?
+
+    /// "Add from URL": looks at the start of the file behind the link and reports whether it will run on this phone.
+    func checkLink(_ link: String) {
         var text = link.trimmingCharacters(in: .whitespacesAndNewlines)
         // A Hugging Face page link ("/blob/") shows a web page; "/resolve/" is the file itself.
         if text.contains("huggingface.co") { text = text.replacingOccurrences(of: "/blob/", with: "/resolve/") }
@@ -173,6 +177,32 @@ final class AppState: ObservableObject {
             errorText = DownloadError.badLink.errorDescription
             return
         }
+        linkCheck = LinkCheck(state: .checking)
+        refreshMemory()
+        let room = memUsed + memFree
+        let context = defaults.integer(forKey: Keys.contextSize)
+        checkTask?.cancel()
+        checkTask = Task {
+            do {
+                let head = try await GGUFProbe.fetchHead(url)
+                try Task.checkCancellation()
+                let header = GGUFProbe.parse(head.data)
+                let report = GGUFProbe.report(url: url, name: head.name, header: header, total: head.total, room: room, contextSetting: context)
+                if linkCheck != nil { linkCheck = LinkCheck(state: .done(report)) }
+            } catch is CancellationError {
+            } catch {
+                if linkCheck != nil { linkCheck = LinkCheck(state: .failed(error.localizedDescription)) }
+            }
+        }
+    }
+
+    func cancelCheck() {
+        checkTask?.cancel()
+        linkCheck = nil
+    }
+
+    func startDownload(_ url: URL) {
+        linkCheck = nil
         downloader?.cancel()
         let d = Downloader()
         downloader = d

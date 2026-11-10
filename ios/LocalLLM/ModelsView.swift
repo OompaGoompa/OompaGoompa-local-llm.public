@@ -15,6 +15,10 @@ struct ModelsView: View {
             }
             .navigationTitle("Models")
             .refreshable { app.refreshModels() }
+            .sheet(item: $app.linkCheck) { check in
+                CompatibilityView(check: check) { link = "" }
+                    .presentationDetents([.medium, .large])
+            }
             .fileImporter(isPresented: $showImporter, allowedContentTypes: [.data]) { result in
                 if case .success(let url) = result { app.importModel(from: url) }
             }
@@ -104,17 +108,82 @@ struct ModelsView: View {
                     Button("Cancel", role: .destructive) { app.cancelDownload() }
                 }
             } else {
-                TextField("Link to a .gguf file", text: $link)
+                TextField("https://… .gguf", text: $link)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.URL)
-                Button { app.startDownload(link); link = "" } label: { Label("Download from link", systemImage: "arrow.down.circle") }
+                Button { app.checkLink(link) } label: { Label("Add from URL", systemImage: "link.badge.plus") }
                     .disabled(link.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         } header: {
             Text("Add a model")
         } footer: {
-            Text("Importing copies the file into the app. To skip the copy, move .gguf files straight into On My iPhone › Local LLM › Models in the Files app, then pull down here to refresh. Keep the app open during a download.")
+            Text("Add from URL checks the model against this phone before downloading anything. Importing copies the file into the app. To skip the copy, move .gguf files straight into On My iPhone › Local LLM › Models in the Files app, then pull down here to refresh. Keep the app open during a download.")
+        }
+    }
+}
+
+/// Result of the automatic check that runs before a model is downloaded from a link.
+struct CompatibilityView: View {
+    @EnvironmentObject private var app: AppState
+    let check: LinkCheck
+    let onDownload: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            List {
+                switch check.state {
+                case .checking:
+                    HStack(spacing: 10) { ProgressView(); Text("Checking the model…") }
+                case .failed(let message):
+                    row(.bad, "Could not check this link", message)
+                case .done(let report):
+                    Section {
+                        ForEach(report.lines) { line in row(line.level, line.title, line.detail) }
+                    } header: {
+                        Text(report.fileName)
+                    } footer: {
+                        Text(verdict(report.worst))
+                    }
+                    Section {
+                        switch report.worst {
+                        case .ok:
+                            Button("Download") { onDownload(); app.startDownload(report.url) }
+                        case .warn:
+                            Button("Download anyway") { onDownload(); app.startDownload(report.url) }
+                        case .bad:
+                            Text("This model will not work here, so it was not downloaded.").foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Compatibility")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { app.cancelCheck() } }
+            }
+        }
+    }
+
+    private func verdict(_ level: ModelReport.Level) -> String {
+        switch level {
+        case .ok: return "Compatible with this phone."
+        case .warn: return "Should load, with the cautions above."
+        case .bad: return "Not compatible with this phone."
+        }
+    }
+
+    private func row(_ level: ModelReport.Level, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            switch level {
+            case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            case .warn: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            case .bad: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(detail).font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 }
