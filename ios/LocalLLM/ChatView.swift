@@ -158,6 +158,9 @@ struct MessageRow: View {
 
     @State private var showFiles = false
     @State private var viewing: ViewedModel?
+    @State private var building = false
+    @State private var buildError: String?
+    @State private var buildErrorIsCode = false
 
     private var isUser: Bool { message.role == "user" }
 
@@ -165,6 +168,7 @@ struct MessageRow: View {
         let files = replyFiles
         let fileCount = files.count
         let model = files.first(where: { $0.mesh != nil })
+        let scad = files.last(where: { $0.isScad })
         VStack(alignment: isUser ? .trailing : .leading, spacing: 4) {
             if let name = message.attachmentName {
                 Label(name, systemImage: "doc.text").font(.caption).foregroundStyle(.secondary)
@@ -191,6 +195,16 @@ struct MessageRow: View {
                             Label("View in 3D", systemImage: "rotate.3d")
                         }
                     }
+                    if let scad {
+                        Button { build(scad) } label: {
+                            if building {
+                                HStack(spacing: 6) { ProgressView(); Text("Building…") }
+                            } else {
+                                Label("Build 3D model", systemImage: "cube")
+                            }
+                        }
+                        .disabled(building)
+                    }
                     Button { showFiles = true } label: {
                         Label(fileCount == 1 ? "Save as file" : "Save as files (\(fileCount))", systemImage: "square.and.arrow.down")
                     }
@@ -211,6 +225,36 @@ struct MessageRow: View {
         .sheet(isPresented: $showFiles) { SaveFilesView(replyText: message.text) }
         .sheet(item: $viewing) { model in
             ModelPreviewView(mesh: model.mesh, title: model.title)
+        }
+        .alert("The 3D model could not be built", isPresented: Binding(get: { buildError != nil }, set: { if !$0 { buildError = nil } })) {
+            if buildErrorIsCode {
+                Button("Ask the AI to fix it") {
+                    let message = "OpenSCAD could not build that code. It reported:\n\n\(buildError ?? "")\n\nFix the problem and send the full corrected OpenSCAD code in one code block."
+                    app.send(message, attachment: nil)
+                }
+            }
+            Button("Copy the message") { UIPasteboard.general.string = buildError }
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(String((buildError ?? "").suffix(600)))
+        }
+    }
+
+    /// Sends the OpenSCAD code to the server's 3D builder and opens the result in the viewer.
+    private func build(_ file: ReplyFile) {
+        building = true
+        Task {
+            do {
+                let mesh = try await CadClient.render(file.content)
+                viewing = ViewedModel(mesh: mesh, title: file.name)
+            } catch let error as CadError {
+                if case .build = error { buildErrorIsCode = true } else { buildErrorIsCode = false }
+                buildError = error.localizedDescription
+            } catch {
+                buildErrorIsCode = false
+                buildError = error.localizedDescription
+            }
+            building = false
         }
     }
 

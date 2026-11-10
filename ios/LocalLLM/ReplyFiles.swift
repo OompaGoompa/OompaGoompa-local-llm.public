@@ -12,6 +12,9 @@ struct ReplyFile: Identifiable {
     var data: Data? = nil
     /// The 3D shape, when the file is one, for the built-in viewer.
     var mesh: ThreeMF.Mesh? = nil
+
+    /// OpenSCAD code, which the server's 3D builder can turn into a shape.
+    var isScad: Bool { data == nil && name.lowercased().hasSuffix(".scad") }
 }
 
 enum ReplyFiles {
@@ -39,6 +42,8 @@ enum ReplyFiles {
            let data = content.data(using: .utf8), (try? JSONSerialization.jsonObject(with: data)) != nil {
             return "json"
         }
+        let scadWords = ["linear_extrude(", "rotate_extrude(", "difference()", "translate([", "cylinder(", "cube(", "$fn"]
+        if scadWords.filter({ start.contains($0) }).count >= 2, start.contains(";"), !start.contains("facet normal") { return "scad" }
         if start.hasPrefix("#!/bin/bash") || start.hasPrefix("#!/bin/sh") || start.hasPrefix("#!/usr/bin/env bash") { return "sh" }
         if start.hasPrefix("#!/usr/bin/env python") { return "py" }
         return "txt"

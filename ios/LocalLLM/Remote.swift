@@ -194,6 +194,15 @@ struct RemoteView: View {
             }
 
             Section {
+                NavigationLink("3D builder (make printable models)") {
+                    CadSetupView()
+                }
+                .disabled(address.trimmingCharacters(in: .whitespaces).isEmpty)
+            } footer: {
+                Text("Lets the AI design parts as OpenSCAD code that your server turns into .3mf files.")
+            }
+
+            Section {
                 NavigationLink("Server models (add or remove)") {
                     ServerModelsView()
                 }

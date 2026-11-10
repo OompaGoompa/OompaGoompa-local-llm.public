@@ -195,6 +195,13 @@ struct ModelPreviewView: View {
     let mesh: ThreeMF.Mesh
     let title: String
     @State private var showEdges = true
+    @State private var share: ShareItem?
+
+    private func save() {
+        let base = title.split(separator: ".").first.map(String.init) ?? "model"
+        let data = ThreeMF.zip(modelXML: ThreeMF.modelXML(mesh))
+        if let url = ReplyFiles.write(name: base + ".3mf", data: data) { share = ShareItem(url: url) }
+    }
 
     var body: some View {
         let check = mesh.check
@@ -221,6 +228,12 @@ struct ModelPreviewView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button { save() } label: { Label("Save .3mf", systemImage: "square.and.arrow.down") }
+                }
+            }
+            .sheet(item: $share) { item in
+                ActivityView(items: [item.url])
             }
         }
     }

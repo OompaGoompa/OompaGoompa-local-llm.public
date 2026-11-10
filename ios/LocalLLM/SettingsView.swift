@@ -129,6 +129,34 @@ struct PromptView: View {
             }
 
             Section {
+                Button {
+                    text = CadClient.designerPrompt
+                    enabled = true
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("3D designer (OpenSCAD)").foregroundStyle(.primary)
+                            Text("Makes the AI answer with OpenSCAD code for the 3D builder.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if text == CadClient.designerPrompt { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                    }
+                }
+                Button {
+                    text = "You are a helpful assistant."
+                    enabled = true
+                } label: {
+                    HStack {
+                        Text("General assistant").foregroundStyle(.primary)
+                        Spacer()
+                        if text == "You are a helpful assistant." { Image(systemName: "checkmark").foregroundStyle(.tint) }
+                    }
+                }
+            } header: {
+                Text("Ready-made prompts")
+            }
+
+            Section {
                 Button("Save current prompt…") {
                     newName = ""
                     showNameAlert = true
