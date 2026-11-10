@@ -154,12 +154,20 @@ struct RemoteView: View {
             }
 
             Section {
-                NavigationLink("Set up my own server (step by step)") {
+                NavigationLink("New server (no login needed)") {
+                    NewServerView { chosen in
+                        address = chosen
+                        connect()
+                    }
+                }
+                NavigationLink("Existing server (one command)") {
                     ServerSetupView { chosen in
                         address = chosen
                         connect()
                     }
                 }
+            } header: {
+                Text("Set up my own server")
             } footer: {
                 Text("For a cloud VM such as Oracle's, using only this phone.")
             }
@@ -295,5 +303,99 @@ struct ServerSetupView: View {
                 Text(detail).font(.footnote).foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+/// For a brand-new cloud VM: builds a startup script that makes the server set itself up on first boot.
+struct NewServerView: View {
+    @Environment(\.dismiss) private var dismiss
+    let onUse: (String) -> Void
+    @State private var authKey = ""
+    @State private var copied = false
+    @State private var manualIP = ""
+
+    private var cleanKey: String {
+        authKey.components(separatedBy: .whitespacesAndNewlines).joined()
+    }
+
+    private var keyLooksRight: Bool {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        return cleanKey.hasPrefix("tskey-") && cleanKey.count > 20 && cleanKey.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
+    private var script: String {
+        """
+        #!/bin/bash
+        # Local LLM server: sets itself up on first boot. Progress is written to /var/log/llm-setup.log
+        export HOME=/root
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          curl -fsSL https://raw.githubusercontent.com/OompaGoompa/OompaGoompa-local-llm.public/app/server/setup.sh -o /root/llm-setup.sh && break
+          sleep 15
+        done
+        TS_AUTHKEY='\(cleanKey)' bash /root/llm-setup.sh > /var/log/llm-setup.log 2>&1
+        """
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                Text("1. In the Tailscale app or at login.tailscale.com, sign in. On the website open Settings › Keys and tap Generate auth key. Leave the options as they are and copy the key (it starts with tskey-auth).")
+                    .font(.footnote)
+                SecureField("Paste the tskey-auth key here", text: $authKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                if !authKey.isEmpty && !keyLooksRight {
+                    Text("That does not look like a Tailscale auth key.").font(.footnote).foregroundStyle(.red)
+                }
+            } header: {
+                Text("Tailscale key")
+            }
+
+            Section {
+                Button {
+                    UIPasteboard.general.string = script
+                    copied = true
+                } label: {
+                    Label(copied ? "Copied" : "Copy startup script", systemImage: copied ? "checkmark" : "doc.on.doc")
+                }
+                .disabled(!keyLooksRight)
+                Text("2. When creating the VM, open the advanced options, find \"Initialization script\", choose to paste a script, and paste this in. Then create the VM.")
+                    .font(.footnote)
+            } header: {
+                Text("Startup script")
+            } footer: {
+                Text("The script contains your Tailscale key, so paste it only into your own cloud console.")
+            }
+
+            Section {
+                Text("3. Wait 10 to 15 minutes while the server installs everything and downloads a model. Turn on the Tailscale app on this phone, then tap below.")
+                    .font(.footnote)
+                Button("Use my server") {
+                    onUse("http://llm-server:11434")
+                    dismiss()
+                }
+            } header: {
+                Text("Connect")
+            } footer: {
+                Text("If it says it cannot connect, the server is probably still setting up. Wait a few minutes and try again. In Tailscale's website, turn off key expiry for llm-server so it stays connected.")
+            }
+
+            Section {
+                TextField("100.x.y.z", text: $manualIP)
+                    .keyboardType(.numbersAndPunctuation)
+                    .autocorrectionDisabled()
+                Button("Use this address instead") {
+                    onUse("http://\(manualIP.trimmingCharacters(in: .whitespaces)):11434")
+                    dismiss()
+                }
+                .disabled(manualIP.trimmingCharacters(in: .whitespaces).isEmpty)
+            } header: {
+                Text("If it still does not connect")
+            } footer: {
+                Text("Enter the 100.x.y.z address shown next to llm-server in the Tailscale app.")
+            }
+        }
+        .navigationTitle("New server")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

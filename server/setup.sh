@@ -3,8 +3,12 @@
 # Run on the server (Ubuntu or Oracle Linux, Arm or x86):
 #   curl -fsSL https://raw.githubusercontent.com/OompaGoompa/OompaGoompa-local-llm.public/app/server/setup.sh | bash
 # Optional: choose the model yourself, e.g.  ... | bash -s -- llama3.2:3b
+#
+# With no login at all (new VM): paste the startup script from the app into the cloud's "Initialization script"
+# box. It runs this file with TS_AUTHKEY set, so Tailscale signs in by itself. Progress: /var/log/llm-setup.log
 set -euo pipefail
 
+export HOME="${HOME:-/root}"
 MODEL="${1:-auto}"
 NAME="llm-server"
 PORT=11434
@@ -26,10 +30,15 @@ say "2/4 Installing Tailscale (private link between this server and your phone)"
 if ! command -v tailscale >/dev/null 2>&1; then
   curl -fsSL https://tailscale.com/install.sh | sh
 fi
-if ! sudo tailscale status >/dev/null 2>&1; then
-  echo "Open the link below on your phone and sign in. Setup continues by itself afterwards."
+sudo systemctl enable --now tailscaled >/dev/null 2>&1 || true
+if [ -n "${TS_AUTHKEY:-}" ]; then
+  sudo tailscale up --authkey="$TS_AUTHKEY" --hostname="$NAME"
+else
+  if ! sudo tailscale status >/dev/null 2>&1; then
+    echo "Open the link below on your phone and sign in. Setup continues by itself afterwards."
+  fi
+  sudo tailscale up --hostname="$NAME"
 fi
-sudo tailscale up --hostname="$NAME"
 
 say "3/4 Allowing the app in through the private link only"
 # The model port is opened on the Tailscale interface, never on the public internet side.
