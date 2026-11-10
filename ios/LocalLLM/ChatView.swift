@@ -156,6 +156,8 @@ struct MessageRow: View {
     let message: ChatMessage
     let isLast: Bool
 
+    @State private var showFiles = false
+
     private var isUser: Bool { message.role == "user" }
 
     var body: some View {
@@ -175,8 +177,15 @@ struct MessageRow: View {
                     .contextMenu {
                         Button { UIPasteboard.general.string = message.text } label: { Label("Copy", systemImage: "doc.on.doc") }
                         ShareLink(item: message.text) { Label("Share text", systemImage: "square.and.arrow.up") }
-                        Button { app.shareFile(named: isUser ? "message" : "reply", text: message.text) } label: { Label("Send as a file", systemImage: "doc") }
+                        Button { showFiles = true } label: { Label("Save as file…", systemImage: "square.and.arrow.down") }
                     }
+            }
+            if !isUser, !message.text.isEmpty, !(isLast && app.isGenerating), fileCount > 0 {
+                Button { showFiles = true } label: {
+                    Label(fileCount == 1 ? "Save as file" : "Save as files (\(fileCount))", systemImage: "square.and.arrow.down")
+                }
+                .font(.caption)
+                .buttonStyle(.bordered)
             }
             if !isUser, isLast, !app.isGenerating, !message.text.isEmpty {
                 HStack(spacing: 12) {
@@ -188,6 +197,12 @@ struct MessageRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
+        .sheet(isPresented: $showFiles) { SaveFilesView(replyText: message.text) }
+    }
+
+    /// How many code or data blocks the reply holds. Skipped while the reply is still being written.
+    private var fileCount: Int {
+        message.text.contains("```") ? ReplyFiles.extract(from: message.text).count : 0
     }
 
     /// Bold, italics, code and links are shown; anything that is not valid Markdown stays as plain text.
